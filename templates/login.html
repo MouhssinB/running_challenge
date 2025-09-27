@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Connexion Admin — Défi Running{% endblock %}
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-sm-8 col-md-6 col-lg-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 mb-3 text-center">Connexion administrateur</h2>
+          <form method="post" action="{{ url_for('login') }}">
+            {% if next_url %}
+              <input type="hidden" name="next" value="{{ next_url }}">
+            {% endif %}
+            <div class="mb-3">
+              <label for="username" class="form-label">Identifiant</label>
+              <input type="text" class="form-control" id="username" name="username" required autofocus>
+            </div>
+            <div class="mb-3">
+              <label for="password" class="form-label">Mot de passe</label>
+              <input type="password" class="form-control" id="password" name="password" required>
+            </div>
+            <div class="d-grid">
+              <button type="submit" class="btn btn-dark">Se connecter</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

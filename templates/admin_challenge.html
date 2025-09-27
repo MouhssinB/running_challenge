@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Admin — Défi en cours{% endblock %}
+{% block content %}
+  <h1 class="mb-4">🎯 Défi en cours (unique)</h1>
+
+  <form method="post">
+    <div class="row g-3 form-grid-stack">
+      <div class="col-12 col-md-4">
+        <label class="form-label">Objectif (km)</label>
+        <input type="number" step="1" min="1" class="form-control" name="goal_km" value="{{ challenge.goal_km if challenge else 80 }}">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Date de début</label>
+        <input type="date" class="form-control" name="start_date" value="{{ challenge.start_date if challenge else (now().date() if false else '') }}">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Date de fin</label>
+        <input type="date" class="form-control" name="end_date" value="{{ challenge.end_date if challenge else '' }}">
+      </div>
+    </div>
+    <div class="form-check mt-3">
+      <input class="form-check-input" type="checkbox" value="on" id="reset" name="reset">
+      <label class="form-check-label" for="reset">
+        Réinitialiser toutes les entrées existantes (pas d'historique)
+      </label>
+    </div>
+    <div class="mt-3">
+      <button class="btn btn-primary">💾 Enregistrer le défi</button>
+    </div>
+  </form>
+
+  {% if challenge %}
+  <div class="mt-4">
+    <div class="alert alert-secondary">
+      Défi actuel : <b>{{ challenge.goal_km }} km</b> du <b>{{ challenge.start_date }}</b> au <b>{{ challenge.end_date }}</b>.
+    </div>
+  </div>
+  {% endif %}
+{% endblock %}

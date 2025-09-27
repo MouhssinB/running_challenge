@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ texts.dashboard.page_title }}{% endblock %}
+{% block content %}
+  <h1 class="mb-4">{{ texts.dashboard.heading }}</h1>
+
+  {% if not challenge %}
+    <div class="alert alert-warning">{{ texts.dashboard.no_challenge|safe }}</div>
+  {% endif %}
+
+  <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3 dashboard-metrics">
+    <div class="col">
+      <div class="card text-center dashboard-card h-100">
+        <div class="card-body">
+          <div class="card-title fs-6">{{ texts.dashboard.goal_label }}</div>
+          <div class="display-6">{{ "%.0f"|format(goal_km|default(0)) }} km</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card text-center dashboard-card h-100">
+        <div class="card-body">
+          <div class="card-title fs-6">{{ texts.dashboard.remaining_label }}</div>
+          <div class="display-6">{{ remaining_text }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="my-4">
+
+  <h4>{{ texts.dashboard.progress_heading }}</h4>
+  {% set total_formatted = "%.2f"|format(total_km) %}
+  {% set goal_formatted = "%.2f"|format(goal_km) %}
+  {% set percent_formatted = "%.1f"|format(percent) %}
+  <p>{{ texts.dashboard.progress_sentence|format(total=total_formatted, goal=goal_formatted, percent=percent_formatted)|safe }}</p>
+  <div class="progress mb-3" style="height: 24px;">
+    <div
+      class="progress-bar bg-success"
+      role="progressbar"
+      style="width: {{ percent|round(1) }}%;"
+      aria-valuenow="{{ percent|round(1) }}"
+      aria-valuemin="0"
+      aria-valuemax="100"
+    >
+      {{ "%.1f"|format(percent) }}%
+    </div>
+  </div>
+
+  {% if goal_km > 0 and total_km >= goal_km %}
+    <div class="alert alert-success">{{ texts.dashboard.goal_reached }}</div>
+  {% endif %}
+
+  <hr class="my-4">
+
+  <h4>{{ texts.dashboard.leaders_heading }}</h4>
+  {% if leaders|length == 0 %}
+    <div class="alert alert-info">{{ texts.dashboard.no_runners|safe }}</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table align-middle">
+      <thead>
+        <tr>
+          <th style="width:80px;">{{ texts.dashboard.table_photo }}</th>
+          <th>{{ texts.dashboard.table_runner }}</th>
+          <th class="text-end">{{ texts.dashboard.table_total }}</th>
+          <th style="width:100px;"></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in leaders %}
+        <tr>
+          <td>
+            {% if r.photo_path %}
+              <img src="{{ url_for('static', filename=r.photo_path) }}" class="avatar-sm" alt="{{ r.name }}">
+            {% else %}
+              <div class="avatar-sm placeholder">{{ r.name[0]|upper }}</div>
+            {% endif %}
+          </td>
+          <td class="fw-medium">{{ r.name }}</td>
+          <td class="text-end fw-bold">{{ "%.2f"|format(r.total_km or 0.0) }}</td>
+          <td class="text-end">
+            {% if loop.index0 == 0 and (r.total_km or 0) > 0 %}🥇{% elif loop.index0 == 1 and (r.total_km or 0) > 0 %}🥈{% elif loop.index0 == 2 and (r.total_km or 0) > 0 %}🥉{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,63 @@
+.avatar-sm {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 2px solid #eee;
+}
+.avatar-sm.placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0f0f0;
+  color: #666;
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.dashboard-metrics .dashboard-card .display-6 {
+  font-size: 2rem;
+}
+
+@media (max-width: 575.98px) {
+  body {
+    font-size: 0.95rem;
+  }
+
+  .navbar-brand {
+    font-size: 1rem;
+  }
+
+  .navbar .nav-link {
+    padding: 0.4rem 0.6rem;
+  }
+
+  .dashboard-metrics .dashboard-card .display-6 {
+    font-size: 1.5rem;
+  }
+
+  .dashboard-metrics .dashboard-card .card-title {
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+  }
+
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .btn {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .form-grid-stack > [class*="col-"] {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
+
+  .form-grid-stack .d-grid {
+    margin-top: 0.5rem;
+  }
+}
