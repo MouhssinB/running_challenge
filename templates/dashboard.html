@@ -7,6 +7,19 @@
     <div class="alert alert-warning">{{ texts.dashboard.no_challenge|safe }}</div>
   {% endif %}
 
+  {% if last_winner and last_winner.winner_name %}
+  <div class="d-flex justify-content-end mb-3">
+    <div class="winner-banner alert alert-success d-inline-flex align-items-start gap-3 mb-0" data-confetti-trigger role="button" tabindex="0">
+      <div>
+        <div class="fw-bold text-uppercase small">{{ texts.dashboard.winner_banner.title }}</div>
+        <div class="mb-1">{{ texts.dashboard.winner_banner.message|format(name=last_winner.winner_name, total="%.2f"|format(last_winner.winner_total_km or 0.0))|safe }}</div>
+        <div class="winner-banner-cta text-muted small">{{ texts.dashboard.winner_banner.cta }}</div>
+      </div>
+      <div class="winner-banner-cheer" aria-hidden="true">🎉</div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3 dashboard-metrics">
     <div class="col">
       <div class="card text-center dashboard-card h-100">

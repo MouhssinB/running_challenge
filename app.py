@@ -1,12 +1,14 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, g
+from flask import Flask, render_template, request, redirect, url_for, flash, session, g, make_response
 from werkzeug.utils import secure_filename
 from sqlalchemy import func, and_, desc
 from datetime import date, datetime
 import os
 import pytz
 from functools import wraps
+import csv
+import io
 
-from models import db, Runner, Entry, CurrentChallenge, init_db
+from models import db, Runner, Entry, CurrentChallenge, ChallengeHistory, ChallengeResult, init_db
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 
@@ -30,6 +32,11 @@ TRANSLATIONS = {
             "table_photo": "Photo",
             "table_runner": "Coureur",
             "table_total": "Total (km)",
+            "winner_banner": {
+                "title": "Dernier gagnant",
+                "message": "Félicitations à %(name)s pour ses %(total)s km !",
+                "cta": "Cliquez pour célébrer 🎉",
+            },
         }
     },
     "en": {
@@ -48,6 +55,11 @@ TRANSLATIONS = {
             "table_photo": "Photo",
             "table_runner": "Runner",
             "table_total": "Total (km)",
+            "winner_banner": {
+                "title": "Last Champion",
+                "message": "Congrats to %(name)s for running %(total)s km!",
+                "cta": "Tap to celebrate 🎉",
+            },
         }
     },
 }
@@ -152,12 +164,70 @@ def create_app():
             day_word = "jour" if days == 1 else "jours"
         return f"{days} {day_word} / {km_value} Km"
 
+    def compute_runner_totals_between(start_d: date, end_d: date):
+        return (
+            db.session.query(
+                Runner.id.label("runner_id"),
+                Runner.name.label("runner_name"),
+                func.sum(Entry.distance_km).label("total_km"),
+            )
+            .join(Entry, Entry.runner_id == Runner.id)
+            .filter(Entry.date.between(start_d, end_d))
+            .group_by(Runner.id, Runner.name)
+            .order_by(desc("total_km"), Runner.name.asc())
+            .all()
+        )
+
+    def archive_challenge(challenge: CurrentChallenge):
+        if not challenge:
+            return None
+        existing = (
+            ChallengeHistory.query.filter_by(
+                start_date=challenge.start_date,
+                end_date=challenge.end_date,
+                goal_km=challenge.goal_km,
+            )
+            .order_by(ChallengeHistory.id.desc())
+            .first()
+        )
+        if existing:
+            return existing
+
+        totals = compute_runner_totals_between(challenge.start_date, challenge.end_date)
+        history = ChallengeHistory(
+            goal_km=challenge.goal_km,
+            start_date=challenge.start_date,
+            end_date=challenge.end_date,
+        )
+
+        if totals:
+            top = totals[0]
+            top_distance = float(top.total_km or 0.0)
+            if top_distance > 0:
+                history.winner_runner_id = top.runner_id
+                history.winner_name = top.runner_name
+                history.winner_total_km = top_distance
+        history.results = [
+            ChallengeResult(
+                runner_id=row.runner_id,
+                runner_name=row.runner_name,
+                total_km=float(row.total_km or 0.0),
+            )
+            for row in totals
+        ]
+
+        db.session.add(history)
+        return history
+
     # ---------------- Routes: Dashboard ----------------
     @app.route("/")
     def dashboard():
         locale = getattr(g, "locale", default_locale)
         locale_texts = TRANSLATIONS.get(locale, TRANSLATIONS[default_locale])
         dashboard_texts = locale_texts["dashboard"]
+        last_winner = (
+            ChallengeHistory.query.order_by(ChallengeHistory.completed_at.desc()).first()
+        )
         ch = db.session.get(CurrentChallenge, 1)
         if not ch:
             flash(dashboard_texts["no_challenge_flash"], "warning")
@@ -170,6 +240,7 @@ def create_app():
                 left_days=0,
                 remaining_km=0.0,
                 remaining_text=format_remaining(locale, 0, 0.0),
+                last_winner=last_winner,
                 leaders=[],
             )
 
@@ -205,6 +276,7 @@ def create_app():
             left_days=left,
             remaining_km=round(remaining_km, 2),
             remaining_text=remaining_text,
+            last_winner=last_winner,
             leaders=leaders,
         )
 
@@ -213,6 +285,9 @@ def create_app():
     @admin_required
     def admin_challenge():
         ch = db.session.get(CurrentChallenge, 1)
+        history_items = (
+            ChallengeHistory.query.order_by(ChallengeHistory.completed_at.desc()).all()
+        )
         if request.method == "POST":
             try:
                 goal_km = float(request.form.get("goal_km", "0"))
@@ -227,20 +302,33 @@ def create_app():
                 if goal_km <= 0:
                     raise ValueError("L'objectif (km) doit être supérieur à 0.")
 
+                archived = None
                 if ch is None:
                     ch = CurrentChallenge(id=1, goal_km=goal_km, start_date=start_d, end_date=end_d)
                     db.session.add(ch)
                 else:
+                    should_archive = reset or (
+                        ch.start_date != start_d
+                        or ch.end_date != end_d
+                        or ch.goal_km != goal_km
+                    )
+                    if should_archive:
+                        archived = archive_challenge(ch)
                     ch.goal_km = goal_km
                     ch.start_date = start_d
                     ch.end_date = end_d
 
+                if reset:
+                    Entry.query.delete()
+
                 db.session.commit()
 
+                if archived and archived.winner_name:
+                    flash(
+                        f"Défi précédent archivé — bravo à {archived.winner_name} ({archived.winner_total_km or 0:.2f} km).",
+                        "info",
+                    )
                 if reset:
-                    # supprimer toutes les entrées
-                    Entry.query.delete()
-                    db.session.commit()
                     flash("Toutes les entrées ont été supprimées. La progression est réinitialisée à 0%.", "info")
 
                 flash("Défi enregistré avec succès.", "success")
@@ -249,7 +337,100 @@ def create_app():
                 db.session.rollback()
                 flash(f"Erreur: {e}", "danger")
 
-        return render_template("admin_challenge.html", challenge=ch)
+        return render_template("admin_challenge.html", challenge=ch, history_items=history_items)
+
+    @app.get("/admin/challenge/results/export")
+    @admin_required
+    def export_current_challenge_results():
+        ch = db.session.get(CurrentChallenge, 1)
+        if not ch:
+            flash("Aucun défi en cours.", "warning")
+            return redirect(url_for("admin_challenge"))
+
+        totals = compute_runner_totals_between(ch.start_date, ch.end_date)
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["runner_id", "runner_name", "total_km"])
+        for row in totals:
+            writer.writerow([
+                row.runner_id,
+                row.runner_name,
+                f"{float(row.total_km or 0.0):.2f}",
+            ])
+
+        filename = f"challenge_{ch.start_date}_{ch.end_date}_results.csv"
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        response.headers["Content-Type"] = "text/csv; charset=utf-8"
+        return response
+
+    @app.get("/admin/challenge/history/<int:history_id>/results/export")
+    @admin_required
+    def export_history_challenge_results(history_id: int):
+        history = db.session.get(ChallengeHistory, history_id)
+        if not history:
+            flash("Défi archivé introuvable.", "warning")
+            return redirect(url_for("admin_challenge"))
+
+        results = sorted(history.results, key=lambda r: r.total_km, reverse=True)
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["runner_id", "runner_name", "total_km"])
+        for row in results:
+            writer.writerow([
+                row.runner_id or "",
+                row.runner_name,
+                f"{row.total_km:.2f}",
+            ])
+
+        filename = f"challenge_{history.start_date}_{history.end_date}_results.csv"
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        response.headers["Content-Type"] = "text/csv; charset=utf-8"
+        return response
+
+    @app.post("/admin/challenge/history/<int:history_id>/delete")
+    @admin_required
+    def delete_history_entry(history_id: int):
+        history = db.session.get(ChallengeHistory, history_id)
+        if not history:
+            flash("Défi archivé introuvable.", "warning")
+            return redirect(url_for("admin_challenge"))
+        try:
+            db.session.delete(history)
+            db.session.commit()
+            flash("Entrée d'historique supprimée.", "info")
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"Erreur lors de la suppression: {exc}", "danger")
+        return redirect(url_for("admin_challenge"))
+
+    @app.post("/admin/challenge/history/<int:history_id>/update")
+    @admin_required
+    def update_history_entry(history_id: int):
+        history = db.session.get(ChallengeHistory, history_id)
+        if not history:
+            flash("Défi archivé introuvable.", "warning")
+            return redirect(url_for("admin_challenge"))
+
+        winner_name = (request.form.get("winner_name") or "").strip() or None
+        winner_total_km_raw = request.form.get("winner_total_km")
+        try:
+            winner_total_km = float(winner_total_km_raw) if winner_total_km_raw else None
+        except ValueError:
+            flash("Distance gagnant invalide.", "danger")
+            return redirect(url_for("admin_challenge"))
+
+        history.winner_name = winner_name
+        history.winner_total_km = winner_total_km
+
+        try:
+            db.session.commit()
+            flash("Historique mis à jour.", "success")
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"Erreur lors de la mise à jour: {exc}", "danger")
+        return redirect(url_for("admin_challenge"))
 
     # ---------------- Admin: Runners ----------------
     @app.route("/admin/runners", methods=["GET", "POST"])
@@ -373,6 +554,123 @@ def create_app():
         )
         return render_template("admin_entries.html", challenge=ch, runners=runners, entries=entries)
 
+    @app.get("/admin/entries/export")
+    @admin_required
+    def export_entries_csv():
+        entries = (
+            db.session.query(Entry)
+            .order_by(Entry.date.asc(), Entry.id.asc())
+            .all()
+        )
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "runner_name",
+            "date",
+            "distance_km",
+        ])
+        for entry in entries:
+            runner = entry.runner
+            writer.writerow(
+                [
+                    runner.name if runner else "",
+                    entry.date.isoformat(),
+                    f"{entry.distance_km:.2f}",
+                ]
+            )
+
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = "attachment; filename=entries.csv"
+        response.headers["Content-Type"] = "text/csv; charset=utf-8"
+        return response
+
+    @app.post("/admin/entries/import")
+    @admin_required
+    def import_entries_csv():
+        file = request.files.get("entries_csv")
+        if not file or file.filename == "":
+            flash("Veuillez sélectionner un fichier CSV à importer.", "warning")
+            return redirect(url_for("admin_entries"))
+
+        try:
+            content = file.stream.read().decode("utf-8-sig")
+        except Exception:
+            flash("Impossible de lire le fichier fourni.", "danger")
+            return redirect(url_for("admin_entries"))
+
+        reader = csv.DictReader(io.StringIO(content))
+        if not reader.fieldnames:
+            flash("Le fichier CSV est vide ou sans en-têtes.", "warning")
+            return redirect(url_for("admin_entries"))
+
+        required = {"runner_name", "date", "distance_km"}
+        if not required.issubset(set(reader.fieldnames)):
+            flash(
+                "Le CSV doit contenir les colonnes 'runner_name', 'date' et 'distance_km'.",
+                "danger",
+            )
+            return redirect(url_for("admin_entries"))
+
+        ch = db.session.get(CurrentChallenge, 1)
+        created = 0
+        errors = []
+
+        for index, row in enumerate(reader, start=2):
+            try:
+                name = (row.get("runner_name") or "").strip()
+                if not name:
+                    raise ValueError("runner_name manquant")
+                runner = (
+                    Runner.query.filter(func.lower(Runner.name) == name.lower())
+                    .order_by(Runner.created_at.asc())
+                    .first()
+                )
+                if not runner:
+                    raise ValueError("Coureur introuvable")
+
+                try:
+                    entry_date = date.fromisoformat(row["date"].strip())
+                except Exception as exc:
+                    raise ValueError("Date invalide") from exc
+
+                distance = float(row["distance_km"])
+                if distance <= 0:
+                    raise ValueError("Distance doit être > 0")
+
+                if ch and (entry_date < ch.start_date or entry_date > ch.end_date):
+                    raise ValueError(
+                        f"Date hors période du défi ({ch.start_date} → {ch.end_date})"
+                    )
+
+                entry = Entry(
+                    runner_id=runner.id,
+                    date=entry_date,
+                    distance_km=distance,
+                )
+                db.session.add(entry)
+                created += 1
+            except Exception as exc:
+                errors.append(f"Ligne {index}: {exc}")
+
+        if created > 0:
+            try:
+                db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                flash(f"Erreur lors de l'enregistrement: {exc}", "danger")
+                return redirect(url_for("admin_entries"))
+            flash(f"{created} entrées importées avec succès.", "success")
+        else:
+            db.session.rollback()
+            flash("Aucune entrée importée.", "warning")
+
+        if errors:
+            sample = "; ".join(errors[:3])
+            if len(errors) > 3:
+                sample += " …"
+            flash(f"Certaines lignes n'ont pas pu être importées: {sample}", "warning")
+
+        return redirect(url_for("admin_entries"))
     @app.post("/admin/entry/<int:entry_id>/update")
     @admin_required
     def update_entry_view(entry_id: int):
